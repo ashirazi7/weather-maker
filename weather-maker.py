@@ -1,3 +1,4 @@
+#!/usr/bin/env python3
 # Copyright (C) 2011, 2013, 2017 Ben Elliston
 #
 # This file is free software; you can redistribute it and/or modify it
@@ -26,6 +27,8 @@ import pandas as pd
 from latlong import LatLong
 
 ghi_trace, dni_trace = None, None
+ghi_dirname = "hourly_ghi"
+dni_dirname = "hourly_dni"
 
 
 def tmy3_preamble(f):
@@ -145,24 +148,26 @@ def disk_irradiances(hr, location):
     x, y = location.xy()
     # Compute a solar data filename from the hour
 
-    filename = hr.strftime(args.grids + '/GHI/%d/' % hr.year +
+    filename = hr.strftime(ghi_dir + '/%d/' % hr.year +
                            hr.strftime('solar_ghi_%Y%m%d_%HUT.txt'))
     try:
         f = open(filename, 'r')
         line = f.readlines()[x + 6]
         f.close()
         ghr = int(line.split()[y])
+        print("Read file '%s'" % os.path.basename(filename))
     except IOError:
         logging.error('grid file %s missing', filename)
         ghr = 0
 
-    filename = hr.strftime(args.grids + '/DNI/%d/' % hr.year +
+    filename = hr.strftime(dni_dir + '/%d/' % hr.year +
                            hr.strftime('solar_dni_%Y%m%d_%HUT.txt'))
     try:
         f = open(filename, 'r')
         line = f.readlines()[x + 6]
         f.close()
         dnr = int(line.split()[y])
+        print("Read file '%s'" % os.path.basename(filename))
     except IOError:
         logging.error('grid file %s missing', filename)
         dnr = 0
@@ -224,9 +229,19 @@ if args.verbose:
     log.setLevel(logging.INFO)
 
 # Check that the grid directory exists
-if args.grids is not None and not os.path.isdir(args.grids):
-    log.critical('%s is not a directory', args.grids)
-    sys.exit(1)
+if args.grids is not None:
+	if not os.path.isdir(args.grids):
+		log.critical('%s is not a directory', args.grids)
+		sys.exit(1)
+	ghi_dir = os.path.join(args.grids,ghi_dirname)
+	if not os.path.isdir(ghi_dir):
+		log.critical('%s is not a directory', ghi_dir)
+		sys.exit(1)
+	dni_dir = os.path.join(args.grids,dni_dirname)
+	if not os.path.isdir(dni_dir):
+		log.critical('%s is not a directory', dni_dir)
+		sys.exit(1)
+
 
 outfile = open(args.out, 'w')
 
@@ -271,8 +286,8 @@ def _parse(y, m, d, hh, mm):
 df = pd.read_csv(args.hm_data, sep=',', skipinitialspace=True, low_memory=False,
                  date_parser=_parse,
                  index_col='datetime',
-                 parse_dates={'datetime': ['Year Month Day Hour Minutes in YYYY.1',
-                                           'MM.1', 'DD.1', 'HH24.1',
+                 parse_dates={'datetime': ['Year Month Day Hour Minutes in YYYY',
+                                           'MM', 'DD', 'HH24',
                                            'MI format in Local standard time']})
 
 # Interpolate missing data (limit to args.i hours aka 2*args.i half-hours)
@@ -301,6 +316,16 @@ df.fillna(value=missing_values, inplace=True)
 
 log.info("Processing grids")
 
+possibly_missing = {
+	'dry-bulb' : 'Air Temperature in degrees C'
+	,'wet-bulb' : 'Wet bulb temperature in degrees C'
+	,'dew-point' : 'Dew point temperature in degrees C'
+	,'rel-humidity' : 'Relative humidity in percentage %'
+	,'wind-speed' : 'Wind speed in km/h'
+	,'wind-direction' : 'Wind direction in degrees true'
+	,'atm-pressure' : 'Station level pressure in hPa'
+}
+
 for i, (_, row) in enumerate(df.iterrows()):
 
     offset = datetime.timedelta(hours=i)
@@ -309,17 +334,12 @@ for i, (_, row) in enumerate(df.iterrows()):
 
     record = {}
     record['hour'] = i
-    record['dry-bulb'] = row['Air Temperature in degrees C']
-    record['wet-bulb'] = row['Wet bulb temperature in degrees C']
-    record['dew-point'] = row['Dew point temperature in degrees C']
-    record['rel-humidity'] = row['Relative humidity in percentage %']
-    record['wind-speed'] = row['Wind speed in km/h']
-    if record['wind-speed'] != 999:
-        record['wind-speed'] /= 3.6
 
-    record['wind-direction'] = row['Wind direction in degrees true']
-    record['atm-pressure'] = row['Station level pressure in hPa']
-    if record['atm-pressure'] != 999999:
+    for k,v in possibly_missing.items():
+        record[k] = row.get(v,missing_values[v])
+    if record['wind-speed'] != missing_values[possibly_missing['wind-speed']]:
+        record['wind-speed'] /= 3.6
+    if record['atm-pressure'] != missing_values[possibly_missing['atm-pressure']]:
         record['atm-pressure'] *= 100.
 
     if args.grids is not None:
