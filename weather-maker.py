@@ -27,8 +27,8 @@ import pandas as pd
 from latlong import LatLong
 
 ghi_trace, dni_trace = None, None
-ghi_dirname = "hourly_ghi"
-dni_dirname = "hourly_dni"
+ghi_dirname = "GHI"
+dni_dirname = "DNI"
 
 
 def tmy3_preamble(f):
@@ -221,6 +221,8 @@ parser.add_argument("--format", type=str, default="epw",
                     help="output format: EPW [default] or TMY3")
 parser.add_argument("-v", "--verbose", action="store_true", dest="verbose",
                     help="verbose run output")
+parser.add_argument("-d", "--joined-up-dates", action="store_true", dest="datesjoined"
+                    , help="Newer BOM data file format with joined-up date/time fields")
 args = parser.parse_args()
 
 logging.basicConfig(format='%(levelname)s: %(message)s')
@@ -276,19 +278,34 @@ missing_values = {'Air Temperature in degrees C': 99.9,
                   'Wind speed in km/h': 999.,
                   'Wind speed in m/s': 999.,
                   'Wind direction in degrees true': 999.,
-                  'Station level pressure in hPa': 999999.}
+                  'Mean sea level pressure in hPa': 999999.}
 
+if args.datesjoined:
+	def _parse(str_dmy,str_hm):
+		try:
+			d,m,y = str_dmy.split("/")
+		except ValueError:
+			print("Failed to split '%s'" % (str_dmy,))
+			sys.exit(1)
+		hh,mm = str_hm.split(":")
+		return pd.datetime(int(y), int(m), int(d), int(hh), int(mm))
 
-def _parse(y, m, d, hh, mm):
-    return pd.datetime(int(y), int(m), int(d), int(hh), int(mm))
+	df = pd.read_csv(args.hm_data, sep=',', skipinitialspace=True, low_memory=False,
+		             date_parser=_parse,
+		             index_col='datetime',
+		             parse_dates={'datetime': ['Day/Month/Year in DD/MM/YYYY format',
+		                                       'Hour24:Minutes  in HH24:MI format in Local standard time']}
+			)
+else:
+	def _parse(y, m, d, hh, mm):
+		return pd.datetime(int(y), int(m), int(d), int(hh), int(mm))
 
-
-df = pd.read_csv(args.hm_data, sep=',', skipinitialspace=True, low_memory=False,
-                 date_parser=_parse,
-                 index_col='datetime',
-                 parse_dates={'datetime': ['Year Month Day Hour Minutes in YYYY',
-                                           'MM', 'DD', 'HH24',
-                                           'MI format in Local standard time']})
+	df = pd.read_csv(args.hm_data, sep=',', skipinitialspace=True, low_memory=False,
+		             date_parser=_parse,
+		             index_col='datetime',
+		             parse_dates={'datetime': ['Year Month Day Hour Minutes in YYYY',
+		                                       'MM', 'DD', 'HH24',
+		                                       'MI format in Local standard time']})
 
 # Interpolate missing data (limit to args.i hours aka 2*args.i half-hours)
 df.interpolate(inplace=True, limit=args.i * 2)
@@ -307,7 +324,7 @@ subset = df.loc[:, ['Air Temperature in degrees C',
                     'Dew point temperature in degrees C',
                     'Relative humidity in percentage %',
                     'Wind speed in km/h', 'Wind direction in degrees true',
-                    'Station level pressure in hPa']]
+                    'Mean sea level pressure in hPa']]
 if subset.isnull().sum().sum() > 0:
     log.warning('missing values in weather data:\n%s', subset.isnull().sum())
 
@@ -323,7 +340,7 @@ possibly_missing = {
 	,'rel-humidity' : 'Relative humidity in percentage %'
 	,'wind-speed' : 'Wind speed in km/h'
 	,'wind-direction' : 'Wind direction in degrees true'
-	,'atm-pressure' : 'Station level pressure in hPa'
+	,'atm-pressure' : 'Mean sea level pressure in hPa'
 }
 
 for i, (_, row) in enumerate(df.iterrows()):
